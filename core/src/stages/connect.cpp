@@ -38,13 +38,9 @@
 
 #include <moveit/task_constructor/stages/connect.h>
 #include <moveit/task_constructor/merge.h>
-#include <moveit/task_constructor/moveit_compat.h>
-#include <moveit/task_constructor/cost_terms.h>
-
 #include <moveit/planning_scene/planning_scene.h>
-#include <moveit/trajectory_processing/time_optimal_trajectory_generation.h>
 
-using namespace trajectory_processing;
+#include <moveit/task_constructor/cost_terms.h>
 
 namespace moveit {
 namespace task_constructor {
@@ -58,8 +54,6 @@ Connect::Connect(const std::string& name, const GroupPlannerVector& planners) : 
 	p.declare<MergeMode>("merge_mode", WAYPOINTS, "merge mode");
 	p.declare<moveit_msgs::Constraints>("path_constraints", moveit_msgs::Constraints(),
 	                                    "constraints to maintain during trajectory");
-	properties().declare<TimeParameterizationPtr>("merge_time_parameterization",
-	                                              std::make_shared<TimeOptimalTrajectoryGeneration>());
 }
 
 void Connect::reset() {
@@ -225,8 +219,7 @@ SubTrajectoryPtr Connect::merge(const std::vector<robot_trajectory::RobotTraject
 
 	auto jmg = merged_jmg_.get();
 	assert(jmg);
-	auto timing = properties().get<TimeParameterizationPtr>("merge_time_parameterization");
-	robot_trajectory::RobotTrajectoryPtr trajectory = task_constructor::merge(sub_trajectories, state, jmg, *timing);
+	robot_trajectory::RobotTrajectoryPtr trajectory = task_constructor::merge(sub_trajectories, state, jmg);
 	if (!trajectory)
 		return SubTrajectoryPtr();
 

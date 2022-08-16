@@ -42,7 +42,6 @@
 #include <moveit/macros/class_forward.h>
 #include <moveit/task_constructor/properties.h>
 #include <moveit/task_constructor/cost_queue.h>
-#include <moveit/task_constructor/utils.h>
 #include <moveit_task_constructor_msgs/Solution.h>
 #include <visualization_msgs/MarkerArray.h>
 
@@ -83,11 +82,9 @@ public:
 	enum Status
 	{
 		ENABLED,  // state is actively considered during planning
-		ARMED,  // disabled state in a Connecting interface that will become re-enabled with a new opposite state
-		PRUNED,  // disabled state on a pruned solution branch
+		DISABLED,  // state is disabled because a required connected state failed
+		DISABLED_FAILED,  // state that failed, causing the whole partial solution to be disabled
 	};
-	static const char* STATUS_COLOR[];
-
 	/** InterfaceStates are ordered according to two values:
 	 *  Depth of interlinked trajectory parts and accumulated trajectory costs along that path.
 	 *  Preference ordering considers high-depth first and within same depth, minimal cost paths.
@@ -103,7 +100,6 @@ public:
 
 		inline Status status() const { return std::get<0>(*this); }
 		inline bool enabled() const { return std::get<0>(*this) == ENABLED; }
-
 		inline unsigned int depth() const { return std::get<1>(*this); }
 		inline double cost() const { return std::get<2>(*this); }
 
@@ -129,7 +125,6 @@ public:
 	/// copy an existing InterfaceState, but not including incoming/outgoing trajectories
 	InterfaceState(const InterfaceState& other);
 	InterfaceState(InterfaceState&& other) = default;
-	InterfaceState& operator=(const InterfaceState& other) = default;
 
 	inline const planning_scene::PlanningSceneConstPtr& scene() const { return scene_; }
 	inline const Solutions& incomingTrajectories() const { return incoming_trajectories_; }
@@ -140,21 +135,13 @@ public:
 
 	/// states are ordered by priority
 	inline bool operator<(const InterfaceState& other) const { return this->priority_ < other.priority_; }
-
 	inline const Priority& priority() const { return priority_; }
-	/// Update priority and call owner's notify() if possible
-	void updatePriority(const InterfaceState::Priority& priority);
-	/// Update status, but keep current priority
-	void updateStatus(Status status);
-
 	Interface* owner() const { return owner_; }
 
 private:
 	// these methods should be only called by SolutionBase::set[Start|End]State()
 	inline void addIncoming(SolutionBase* t) { incoming_trajectories_.push_back(t); }
 	inline void addOutgoing(SolutionBase* t) { outgoing_trajectories_.push_back(t); }
-	// Set new priority without updating the owning interface (USE WITH CARE)
-	inline void setPriority(const Priority& prio) { priority_ = prio; }
 
 private:
 	planning_scene::PlanningSceneConstPtr scene_;
@@ -179,7 +166,6 @@ public:
 	class iterator : public base_type::iterator
 	{
 	public:
-		iterator() = default;
 		iterator(base_type::iterator other) : base_type::iterator(other) {}
 
 		InterfaceState& operator*() const noexcept { return *base_type::iterator::operator*(); }
@@ -201,27 +187,10 @@ public:
 	{
 		FORWARD,
 		BACKWARD,
+		START = FORWARD,
+		END = BACKWARD
 	};
-	enum Update
-	{
-		STATUS = 1 << 0,
-		PRIORITY = 1 << 1,
-		ALL = STATUS | PRIORITY,
-	};
-	using UpdateFlags = utils::Flags<Update>;
-	using NotifyFunction = std::function<void(iterator, UpdateFlags)>;
-
-	class DisableNotify
-	{
-		Interface& if_;
-		Interface::NotifyFunction old_;
-
-	public:
-		DisableNotify(Interface& i) : if_(i) { old_.swap(if_.notify_); }
-		~DisableNotify() { old_.swap(if_.notify_); }
-	};
-	friend class DisableNotify;
-
+	using NotifyFunction = std::function<void(iterator, bool)>;
 	Interface(const NotifyFunction& notify = NotifyFunction());
 
 	/// add a new InterfaceState
@@ -232,10 +201,9 @@ public:
 
 	/// update state's priority (and call notify_ if it really has changed)
 	void updatePriority(InterfaceState* state, const InterfaceState::Priority& priority);
-	inline bool notifyEnabled() const { return static_cast<bool>(notify_); }
 
 private:
-	NotifyFunction notify_;
+	const NotifyFunction notify_;
 
 	// restrict access to some functions to ensure consistency
 	// (we need to set/unset InterfaceState::owner_)
@@ -248,17 +216,6 @@ private:
 
 std::ostream& operator<<(std::ostream& os, const InterfaceState::Priority& prio);
 std::ostream& operator<<(std::ostream& os, const Interface& interface);
-std::ostream& operator<<(std::ostream& os, Interface::Direction);
-
-/// Find index of the iterator in the container. Counting starts at 1. Zero corresponds to not found.
-template <typename T>
-size_t getIndex(const T& container, typename T::const_iterator search) {
-	size_t index = 1;
-	for (typename T::const_iterator it = container.begin(), end = container.end(); it != end; ++it, ++index)
-		if (it == search)
-			return index;
-	return 0;
-}
 
 class CostTerm;
 class StagePrivate;
