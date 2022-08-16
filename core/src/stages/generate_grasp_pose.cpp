@@ -43,7 +43,7 @@
 #include <moveit/robot_state/conversions.h>
 
 #include <Eigen/Geometry>
-#include <tf2_eigen/tf2_eigen.h>
+#include <eigen_conversions/eigen_msg.h>
 
 namespace moveit {
 namespace task_constructor {
@@ -168,7 +168,7 @@ void GenerateGraspPose::compute() {
 		current_angle += props.get<double>("angle_delta");
 
 		InterfaceState state(scene);
-		target_pose_msg.pose = tf2::toMsg(target_pose);
+		tf::poseEigenToMsg(target_pose, target_pose_msg.pose);
 		state.properties().set("target_pose", target_pose_msg);
 		props.exposeTo(state.properties(), { "pregrasp", "grasp" });
 

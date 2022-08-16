@@ -6,36 +6,52 @@
 #include <moveit/planning_scene/planning_scene.h>
 #include <geometry_msgs/PoseStamped.h>
 
-#include "stage_mockups.h"
 #include <ros/console.h>
 #include <gtest/gtest.h>
 
 using namespace moveit::task_constructor;
 using namespace planning_scene;
 
-struct StandaloneGeneratorMockup : public GeneratorMockup
+class GeneratorMockup : public Generator
 {
+	PlanningScenePtr ps;
 	InterfacePtr prev;
 	InterfacePtr next;
 
-	StandaloneGeneratorMockup(std::initializer_list<double>&& costs)
-	  : StandaloneGeneratorMockup{ PredefinedCosts{ std::move(costs), true } } {}
-
-	StandaloneGeneratorMockup(PredefinedCosts&& costs = PredefinedCosts{ { 0.0 }, true })
-	  : GeneratorMockup{ std::move(costs) } {
+public:
+	GeneratorMockup() : Generator("generator") {
 		prev.reset(new Interface);
 		next.reset(new Interface);
 		pimpl()->setPrevEnds(prev);
 		pimpl()->setNextStarts(next);
 	}
+
+	void init(const moveit::core::RobotModelConstPtr& robot_model) override {
+		ps.reset((new PlanningScene(robot_model)));
+		Generator::init(robot_model);
+	}
+
+	bool canCompute() const override { return true; }
+	void compute() override {
+		InterfaceState state(ps);
+		state.properties().set("target_pose", geometry_msgs::PoseStamped());
+		spawn(std::move(state), 0.0);
+	}
+};
+
+class ConnectMockup : public Connecting
+{
+public:
+	using Connecting::compatible;
+	void compute(const InterfaceState& from, const InterfaceState& to) override {}
 };
 
 TEST(Stage, registerCallbacks) {
-	StandaloneGeneratorMockup g{ PredefinedCosts::constant(0.0) };
+	GeneratorMockup g;
 	g.init(getModel());
 
 	uint called = 0;
-	auto cb = [&called](const SolutionBase& /* s */) {
+	auto cb = [&called](const SolutionBase& s) {
 		++called;
 		return true;
 	};

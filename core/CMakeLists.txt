@@ -3,10 +3,9 @@ project(moveit_task_constructor_core)
 
 find_package(Boost REQUIRED)
 find_package(catkin REQUIRED COMPONENTS
-	tf2_eigen
 	actionlib
+	eigen_conversions
 	geometry_msgs
-	grasping_msgs
 	moveit_core
 	moveit_ros_planning
 	moveit_ros_planning_interface
@@ -24,9 +23,7 @@ catkin_package(
 	INCLUDE_DIRS
 		include
 	CATKIN_DEPENDS
-		actionlib
 		geometry_msgs
-		grasping_msgs
 		moveit_core
 		moveit_task_constructor_msgs
 		rviz_marker_tools
@@ -34,6 +31,15 @@ catkin_package(
 )
 
 set(CMAKE_CXX_STANDARD 14)
+
+# check for MOVEIT_MASTER
+include(CheckIncludeFileCXX)
+set(CMAKE_REQUIRED_INCLUDES ${moveit_core_INCLUDE_DIRS})
+CHECK_INCLUDE_FILE_CXX(moveit/collision_detection/collision_env.h MOVEIT_MASTER)
+if(NOT MOVEIT_MASTER)
+  set(MOVEIT_MASTER 0)
+endif()
+add_definitions(-DMOVEIT_MASTER=${MOVEIT_MASTER})
 
 add_compile_options(-fvisibility-inlines-hidden)
 

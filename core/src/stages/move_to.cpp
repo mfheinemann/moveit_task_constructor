@@ -36,16 +36,13 @@
    Desc:    Move to joint-state or Cartesian goal pose
 */
 
-#include <moveit/planning_scene/planning_scene.h>
-#include <moveit/robot_state/conversions.h>
-#include <tf2_eigen/tf2_eigen.h>
-
 #include <moveit/task_constructor/stages/move_to.h>
 #include <moveit/task_constructor/cost_terms.h>
-#include <moveit/task_constructor/moveit_compat.h>
-#include <moveit/task_constructor/utils.h>
 
+#include <moveit/planning_scene/planning_scene.h>
 #include <rviz_marker_tools/marker_creation.h>
+#include <eigen_conversions/eigen_msg.h>
+#include <moveit/robot_state/conversions.h>
 
 namespace moveit {
 namespace task_constructor {
@@ -73,7 +70,7 @@ MoveTo::MoveTo(const std::string& name, const solvers::PlannerInterfacePtr& plan
 void MoveTo::setIKFrame(const Eigen::Isometry3d& pose, const std::string& link) {
 	geometry_msgs::PoseStamped pose_msg;
 	pose_msg.header.frame_id = link;
-	pose_msg.pose = tf2::toMsg(pose);
+	tf::poseEigenToMsg(pose, pose_msg.pose);
 	setIKFrame(pose_msg);
 }
 
@@ -145,29 +142,33 @@ bool MoveTo::getJointStateGoal(const boost::any& goal, const moveit::core::Joint
 }
 
 bool MoveTo::getPoseGoal(const boost::any& goal, const planning_scene::PlanningScenePtr& scene,
-                         Eigen::Isometry3d& target) {
+                         Eigen::Isometry3d& target_eigen) {
 	try {
-		const geometry_msgs::PoseStamped& msg = boost::any_cast<geometry_msgs::PoseStamped>(goal);
-		tf2::fromMsg(msg.pose, target);
+		const geometry_msgs::PoseStamped& target = boost::any_cast<geometry_msgs::PoseStamped>(goal);
+		tf::poseMsgToEigen(target.pose, target_eigen);
+
 		// transform target into global frame
-		target = scene->getFrameTransform(msg.header.frame_id) * target;
+		const Eigen::Isometry3d& frame = scene->getFrameTransform(target.header.frame_id);
+		target_eigen = frame * target_eigen;
 	} catch (const boost::bad_any_cast&) {
 		return false;
 	}
 	return true;
 }
 
-bool MoveTo::getPointGoal(const boost::any& goal, const Eigen::Isometry3d& ik_pose,
+bool MoveTo::getPointGoal(const boost::any& goal, const moveit::core::LinkModel* link,
                           const planning_scene::PlanningScenePtr& scene, Eigen::Isometry3d& target_eigen) {
 	try {
 		const geometry_msgs::PointStamped& target = boost::any_cast<geometry_msgs::PointStamped>(goal);
 		Eigen::Vector3d target_point;
-		tf2::fromMsg(target.point, target_point);
+		tf::pointMsgToEigen(target.point, target_point);
+
 		// transform target into global frame
-		target_point = scene->getFrameTransform(target.header.frame_id) * target_point;
+		const Eigen::Isometry3d& frame = scene->getFrameTransform(target.header.frame_id);
+		target_point = frame * target_point;
 
 		// retain link orientation
-		target_eigen = ik_pose;
+		target_eigen = scene->getCurrentState().getGlobalLinkTransform(link);
 		target_eigen.translation() = target_point;
 	} catch (const boost::bad_any_cast&) {
 		return false;
@@ -203,37 +204,47 @@ bool MoveTo::compute(const InterfaceState& state, planning_scene::PlanningSceneP
 		// plan to joint-space target
 		success = planner_->plan(state.scene(), scene, jmg, timeout, robot_trajectory, path_constraints);
 	} else {  // Cartesian goal
-		// Where to go?
-		Eigen::Isometry3d target;
-		// What frame+offset in the robot should go there?
-		geometry_msgs::PoseStamped ik_pose_msg;
-
 		const moveit::core::LinkModel* link;
-		Eigen::Isometry3d ik_pose_world;
-		if (!utils::getRobotTipForFrame(props.property("ik_frame"), *scene, jmg, solution, link, ik_pose_world))
-			return false;
+		Eigen::Isometry3d target_eigen;
 
-		if (!getPoseGoal(goal, scene, target) && !getPointGoal(goal, ik_pose_world, scene, target)) {
+		// Cartesian targets require an IK reference frame
+		geometry_msgs::PoseStamped ik_pose_msg;
+		const boost::any& value = props.get("ik_frame");
+		if (value.empty()) {  // property undefined
+			// determine IK link from group
+			if (!(link = jmg->getOnlyOneEndEffectorTip())) {
+				solution.markAsFailure("missing ik_frame");
+				return false;
+			}
+			ik_pose_msg.header.frame_id = link->getName();
+			ik_pose_msg.pose.orientation.w = 1.0;
+		} else {
+			ik_pose_msg = boost::any_cast<geometry_msgs::PoseStamped>(value);
+			if (!(link = robot_model->getLinkModel(ik_pose_msg.header.frame_id))) {
+				solution.markAsFailure("unknown link for ik_frame: " + ik_pose_msg.header.frame_id);
+				return false;
+			}
+		}
+
+		if (!getPoseGoal(goal, scene, target_eigen) && !getPointGoal(goal, link, scene, target_eigen)) {
 			solution.markAsFailure(std::string("invalid goal type: ") + goal.type().name());
 			return false;
 		}
 
-		auto add_frame{ [&](const Eigen::Isometry3d& pose, const char name[]) {
-			geometry_msgs::PoseStamped msg;
-			msg.header.frame_id = scene->getPlanningFrame();
-			msg.pose = tf2::toMsg(pose);
-			rviz_marker_tools::appendFrame(solution.markers(), msg, 0.1, name);
-		} };
-
 		// visualize plan with frame at target pose and frame at link
-		add_frame(target, "target frame");
-		add_frame(ik_pose_world, "ik frame");
+		geometry_msgs::PoseStamped target;
+		target.header.frame_id = scene->getPlanningFrame();
+		tf::poseEigenToMsg(target_eigen, target.pose);
+		rviz_marker_tools::appendFrame(solution.markers(), target, 0.1, "ik frame");
+		rviz_marker_tools::appendFrame(solution.markers(), ik_pose_msg, 0.1, "ik frame");
 
 		// transform target pose such that ik frame will reach there if link does
-		target = target * ik_pose_world.inverse() * scene->getCurrentState().getGlobalLinkTransform(link);
+		Eigen::Isometry3d ik_pose;
+		tf::poseMsgToEigen(ik_pose_msg.pose, ik_pose);
+		target_eigen = target_eigen * ik_pose.inverse();
 
 		// plan to Cartesian target
-		success = planner_->plan(state.scene(), *link, target, jmg, timeout, robot_trajectory, path_constraints);
+		success = planner_->plan(state.scene(), *link, target_eigen, jmg, timeout, robot_trajectory, path_constraints);
 	}
 
 	// store result

@@ -36,6 +36,7 @@
 /* Authors: Luca Lach, Robert Haschke */
 
 #include <moveit/task_constructor/merge.h>
+#include <moveit/trajectory_processing/iterative_time_parameterization.h>
 
 #include <boost/range/adaptor/transformed.hpp>
 #include <boost/algorithm/string/join.hpp>
@@ -105,8 +106,7 @@ moveit::core::JointModelGroup* merge(const std::vector<const moveit::core::Joint
 
 robot_trajectory::RobotTrajectoryPtr
 merge(const std::vector<robot_trajectory::RobotTrajectoryConstPtr>& sub_trajectories,
-      const robot_state::RobotState& base_state, moveit::core::JointModelGroup*& merged_group,
-      const trajectory_processing::TimeParameterization& time_parameterization) {
+      const robot_state::RobotState& base_state, moveit::core::JointModelGroup*& merged_group) {
 	if (sub_trajectories.size() <= 1)
 		throw std::runtime_error("Expected multiple sub solutions");
 
@@ -166,7 +166,8 @@ merge(const std::vector<robot_trajectory::RobotTrajectoryConstPtr>& sub_trajecto
 	}
 
 	// add timing
-	time_parameterization.computeTimeStamps(*merged_traj, 1.0, 1.0);
+	trajectory_processing::IterativeParabolicTimeParameterization timing;
+	timing.computeTimeStamps(*merged_traj, 1.0, 1.0);
 	return merged_traj;
 }
 }  // namespace task_constructor
