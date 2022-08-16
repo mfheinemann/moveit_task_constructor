@@ -37,17 +37,12 @@
 */
 
 #include <moveit/task_constructor/solvers/joint_interpolation.h>
-#include <moveit/task_constructor/moveit_compat.h>
 #include <moveit/planning_scene/planning_scene.h>
-#include <moveit/trajectory_processing/time_parameterization.h>
-
-#include <chrono>
+#include <moveit/trajectory_processing/iterative_time_parameterization.h>
 
 namespace moveit {
 namespace task_constructor {
 namespace solvers {
-
-using namespace trajectory_processing;
 
 JointInterpolationPlanner::JointInterpolationPlanner() {
 	auto& p = properties();
@@ -58,9 +53,9 @@ void JointInterpolationPlanner::init(const core::RobotModelConstPtr& /*robot_mod
 
 bool JointInterpolationPlanner::plan(const planning_scene::PlanningSceneConstPtr& from,
                                      const planning_scene::PlanningSceneConstPtr& to,
-                                     const moveit::core::JointModelGroup* jmg, double /*timeout*/,
+                                     const moveit::core::JointModelGroup* jmg, double timeout,
                                      robot_trajectory::RobotTrajectoryPtr& result,
-                                     const moveit_msgs::Constraints& /*path_constraints*/) {
+                                     const moveit_msgs::Constraints& path_constraints) {
 	const auto& props = properties();
 
 	// Get maximum joint distance
@@ -92,45 +87,20 @@ bool JointInterpolationPlanner::plan(const planning_scene::PlanningSceneConstPtr
 	if (from->isStateColliding(to_state, jmg->getName()))
 		return false;
 
-	auto timing = props.get<TimeParameterizationPtr>("time_parameterization");
-	timing->computeTimeStamps(*result, props.get<double>("max_velocity_scaling_factor"),
-	                          props.get<double>("max_acceleration_scaling_factor"));
+	// add timing, TODO: use a generic method to add timing via plugins
+	trajectory_processing::IterativeParabolicTimeParameterization timing;
+	timing.computeTimeStamps(*result, props.get<double>("max_velocity_scaling_factor"),
+	                         props.get<double>("max_acceleration_scaling_factor"));
 
 	return true;
 }
 
-bool JointInterpolationPlanner::plan(const planning_scene::PlanningSceneConstPtr& from,
-                                     const moveit::core::LinkModel& link, const Eigen::Isometry3d& target_eigen,
-                                     const moveit::core::JointModelGroup* jmg, double timeout,
-                                     robot_trajectory::RobotTrajectoryPtr& result,
-                                     const moveit_msgs::Constraints& path_constraints) {
-	const auto start_time = std::chrono::steady_clock::now();
-
-	auto to{ from->diff() };
-
-	kinematic_constraints::KinematicConstraintSet constraints{ to->getRobotModel() };
-	constraints.add(path_constraints, from->getTransforms());
-
-	auto is_valid{ [&constraints, &to](moveit::core::RobotState* robot_state, const moveit::core::JointModelGroup* jmg,
-		                                const double* joint_values) -> bool {
-		robot_state->setJointGroupPositions(jmg, joint_values);
-		robot_state->update();
-		return to->isStateValid(*robot_state, constraints, jmg->getName());
-	} };
-
-	if (!to->getCurrentStateNonConst().setFromIK(jmg, target_eigen, link.getName(), timeout, is_valid)) {
-		// TODO(v4hn): planners need a way to add feedback to failing plans
-		// in case of an invalid solution feedback should include unwanted collisions or violated constraints
-		ROS_WARN_NAMED("JointInterpolationPlanner", "IK failed for pose target");
-		return false;
-	}
-	to->getCurrentStateNonConst().update();
-
-	timeout = std::chrono::duration<double>(std::chrono::steady_clock::now() - start_time).count();
-	if (timeout <= 0.0)
-		return false;
-
-	return plan(from, to, jmg, timeout, result, path_constraints);
+bool JointInterpolationPlanner::plan(const planning_scene::PlanningSceneConstPtr& /*from*/,
+                                     const moveit::core::LinkModel& /*link*/, const Eigen::Isometry3d& /*target_eigen*/,
+                                     const moveit::core::JointModelGroup* /*jmg*/, double /*timeout*/,
+                                     robot_trajectory::RobotTrajectoryPtr& /*result*/,
+                                     const moveit_msgs::Constraints& /*path_constraints*/) {
+	throw std::runtime_error("Not yet implemented");
 }
 }  // namespace solvers
 }  // namespace task_constructor

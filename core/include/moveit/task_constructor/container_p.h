@@ -76,7 +76,7 @@ namespace task_constructor {
 class ContainerBasePrivate : public StagePrivate
 {
 	friend class ContainerBase;
-	friend class ConnectingPrivate;  // needed propagate setStatus() in newState()
+	friend void swap(StagePrivate*& lhs, StagePrivate*& rhs);
 
 public:
 	using container_type = StagePrivate::container_type;
@@ -121,21 +121,15 @@ public:
 	InterfacePtr pendingBackward() const { return pending_backward_; }
 	InterfacePtr pendingForward() const { return pending_forward_; }
 
-	// tags for internal_external_ bimap
-	struct INTERNAL
-	{};
-	struct EXTERNAL
-	{};
 	// map InterfaceStates from children to external InterfaceStates of the container
-	inline const auto& internalToExternalMap() const { return internal_external_.by<INTERNAL>(); }
-	inline const auto& externalToInternalMap() const { return internal_external_.by<EXTERNAL>(); }
+	const auto& internalToExternalMap() const { return internal_external_.left; }
+	const auto& externalToInternalMap() const { return internal_external_.right; }
 
 	/// called by a (direct) child when a solution failed
-	virtual void onNewFailure(const Stage& child, const InterfaceState* from, const InterfaceState* to);
+	void onNewFailure(const Stage& child, const InterfaceState* from, const InterfaceState* to);
 
 protected:
 	ContainerBasePrivate(ContainerBase* me, const std::string& name);
-	ContainerBasePrivate& operator=(ContainerBasePrivate&& other);
 
 	// Set child's push interfaces: allow pushing if child requires it.
 	inline void setChildsPushBackwardInterface(StagePrivate* child) {
@@ -149,25 +143,20 @@ protected:
 		child->setNextStarts(allowed ? pending_forward_ : InterfacePtr());
 	}
 
-	/// Set ENABLED/PRUNED status of a solution branch starting from target into the given direction
+	/// Set ENABLED / DISABLED status of the solution tree starting from s into given direction
 	template <Interface::Direction dir>
-	void setStatus(const Stage* creator, const InterfaceState* source, const InterfaceState* target,
-	               InterfaceState::Status status);
+	void setStatus(const InterfaceState* s, InterfaceState::Status status);
 
-	/// Copy external_state to a child's interface and remember the link in internal_external map
+	/// copy external_state to a child's interface and remember the link in internal_external map
 	template <Interface::Direction>
-	void copyState(Interface::iterator external, const InterfacePtr& target, Interface::UpdateFlags updated);
-	// non-template version
-	void copyState(Interface::Direction dir, Interface::iterator external, const InterfacePtr& target,
-	               Interface::UpdateFlags updated);
-
-	/// Lift solution from internal to external level
+	void copyState(Interface::iterator external, const InterfacePtr& target, bool updated);
+	/// lift solution from internal to external level
 	void liftSolution(const SolutionBasePtr& solution, const InterfaceState* internal_from,
 	                  const InterfaceState* internal_to);
 
 	/// protected writable overloads
-	inline auto& internalToExternalMap() { return internal_external_.by<INTERNAL>(); }
-	inline auto& externalToInternalMap() { return internal_external_.by<EXTERNAL>(); }
+	inline auto& internalToExternalMap() { return internal_external_.left; }
+	inline auto& ExternalToInternalMap() { return internal_external_.right; }
 
 	// set in resolveInterface()
 	InterfaceFlags required_interface_;
@@ -176,8 +165,8 @@ private:
 	container_type children_;
 
 	// map start/end states of children (internal) to corresponding states in our external interfaces
-	boost::bimap<boost::bimaps::unordered_set_of<boost::bimaps::tagged<const InterfaceState*, INTERNAL>>,
-	             boost::bimaps::unordered_multiset_of<boost::bimaps::tagged<const InterfaceState*, EXTERNAL>>>
+	boost::bimap<boost::bimaps::unordered_set_of<const InterfaceState*>,
+	             boost::bimaps::unordered_multiset_of<const InterfaceState*>>
 	    internal_external_;
 
 	/* TODO: these interfaces don't need to be priority-sorted.
@@ -234,90 +223,11 @@ protected:
 	void validateInterfaces(const StagePrivate& child, InterfaceFlags& external, bool first = false) const;
 
 private:
-	/// notify callback for new externally received interface states
+	/// callback for new externally received states
 	template <typename Interface::Direction>
-	void propagateStateToAllChildren(Interface::iterator external, Interface::UpdateFlags updated);
-
-	// override to customize behavior on received interface states (default: propagateStateToAllChildren())
-	virtual void initializeExternalInterfaces();
+	void onNewExternalState(Interface::iterator external, bool updated);
 };
 PIMPL_FUNCTIONS(ParallelContainerBase)
-
-/* The Fallbacks container needs to implement different behaviour based on its interface.
- * Thus, we implement 3 different classes: for Generator, Propagator, and Connect-like interfaces.
- * FallbacksPrivate is the common base class for all of them, defining the common API
- * to be used by the Fallbacks container.
- * The actual interface-specific class is instantiated in initializeExternalInterfaces()
- * resp. Fallbacks::replaceImpl() when the actual interface is known.
- * The key difference between the 3 variants is how they advance to the next job. */
-class FallbacksPrivate : public ParallelContainerBasePrivate
-{
-public:
-	FallbacksPrivate(Fallbacks* me, const std::string& name);
-	FallbacksPrivate(FallbacksPrivate&& other);
-
-	void initializeExternalInterfaces() final;
-	void onNewFailure(const Stage& child, const InterfaceState* from, const InterfaceState* to) override;
-
-	// virtual methods specific to each variant
-	virtual void onNewSolution(const SolutionBase& s);
-	virtual void reset() {}
-};
-PIMPL_FUNCTIONS(Fallbacks)
-
-/* Class shared between FallbacksPrivateGenerator and FallbacksPrivatePropagator,
-   which both have the notion of a currently active child stage */
-class FallbacksPrivateCommon : public FallbacksPrivate
-{
-public:
-	FallbacksPrivateCommon(FallbacksPrivate&& other) : FallbacksPrivate(std::move(other)) {}
-
-	/// Advance to next child
-	inline void nextChild();
-	/// Advance to the next job, assuming that the current child is exhausted on the current job.
-	virtual bool nextJob() = 0;
-
-	void reset() override;
-	bool canCompute() const override;
-	void compute() override;
-
-	container_type::const_iterator current_;  // currently active child
-};
-
-/// Fallbacks implementation for GENERATOR interface
-struct FallbacksPrivateGenerator : FallbacksPrivateCommon
-{
-	FallbacksPrivateGenerator(FallbacksPrivate&& old);
-	bool nextJob() override;
-};
-
-/// Fallbacks implementation for FORWARD or BACKWARD interface
-struct FallbacksPrivatePropagator : FallbacksPrivateCommon
-{
-	FallbacksPrivatePropagator(FallbacksPrivate&& old);
-	void reset() override;
-	void onNewSolution(const SolutionBase& s) override;
-	bool nextJob() override;
-
-	Interface::Direction dir_;  // propagation direction
-	Interface::iterator job_;  // pointer to currently processed external state
-	bool job_has_solutions_;  // flag indicating whether the current job generated solutions
-};
-
-/// Fallbacks implementation for CONNECT interface
-struct FallbacksPrivateConnect : FallbacksPrivate
-{
-	FallbacksPrivateConnect(FallbacksPrivate&& old);
-	void reset() override;
-	bool canCompute() const override;
-	void compute() override;
-	void onNewFailure(const Stage& child, const InterfaceState* from, const InterfaceState* to) override;
-
-	template <Interface::Direction dir>
-	void propagateStateUpdate(Interface::iterator external, Interface::UpdateFlags updated);
-
-	mutable container_type::const_iterator active_;  // child picked for compute()
-};
 
 class WrapperBasePrivate : public ParallelContainerBasePrivate
 {

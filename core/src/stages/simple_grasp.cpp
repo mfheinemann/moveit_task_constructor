@@ -44,7 +44,7 @@
 #include <moveit/planning_scene/planning_scene.h>
 
 #include <Eigen/Geometry>
-#include <tf2_eigen/tf2_eigen.h>
+#include <eigen_conversions/eigen_msg.h>
 
 namespace moveit {
 namespace task_constructor {
@@ -145,7 +145,7 @@ void SimpleGraspBase::init(const moveit::core::RobotModelConstPtr& robot_model) 
 void SimpleGraspBase::setIKFrame(const Eigen::Isometry3d& pose, const std::string& link) {
 	geometry_msgs::PoseStamped pose_msg;
 	pose_msg.header.frame_id = link;
-	pose_msg.pose = tf2::toMsg(pose);
+	tf::poseEigenToMsg(pose, pose_msg.pose);
 	setIKFrame(pose_msg);
 }
 

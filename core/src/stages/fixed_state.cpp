@@ -43,9 +43,7 @@ namespace moveit {
 namespace task_constructor {
 namespace stages {
 
-FixedState::FixedState(const std::string& name, planning_scene::PlanningScenePtr scene)
-  : Generator(name), scene_(scene) {
-	properties().declare("ignore_collisions", false);
+FixedState::FixedState(const std::string& name) : Generator(name) {
 	setCostTerm(std::make_unique<cost::Constant>(0.0));
 }
 
@@ -63,12 +61,7 @@ bool FixedState::canCompute() const {
 }
 
 void FixedState::compute() {
-	SubTrajectory trajectory;
-	if (!properties().get<bool>("ignore_collisions") && scene_->isStateColliding()) {
-		trajectory.markAsFailure("in collision");
-	}
-
-	spawn(InterfaceState(scene_), std::move(trajectory));
+	spawn(InterfaceState(scene_), 0.0);
 	ran_ = true;
 }
 }  // namespace stages

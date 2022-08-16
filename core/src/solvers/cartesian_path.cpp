@@ -37,16 +37,11 @@
 */
 
 #include <moveit/task_constructor/solvers/cartesian_path.h>
-#include <moveit/task_constructor/moveit_compat.h>
-
 #include <moveit/planning_scene/planning_scene.h>
-#include <moveit/trajectory_processing/time_parameterization.h>
-#include <moveit/kinematics_base/kinematics_base.h>
-#if MOVEIT_HAS_CARTESIAN_INTERPOLATOR
+#include <moveit/trajectory_processing/iterative_time_parameterization.h>
+#if MOVEIT_MASTER
 #include <moveit/robot_state/cartesian_interpolator.h>
 #endif
-
-using namespace trajectory_processing;
 
 namespace moveit {
 namespace task_constructor {
@@ -57,8 +52,6 @@ CartesianPath::CartesianPath() {
 	p.declare<double>("step_size", 0.01, "step size between consecutive waypoints");
 	p.declare<double>("jump_threshold", 1.5, "acceptable fraction of mean joint motion per step");
 	p.declare<double>("min_fraction", 1.0, "fraction of motion required for success");
-	p.declare<kinematics::KinematicsQueryOptions>("kinematics_options", kinematics::KinematicsQueryOptions(),
-	                                              "KinematicsQueryOptions to pass to CartesianInterpolator");
 }
 
 void CartesianPath::init(const core::RobotModelConstPtr& /*robot_model*/) {}
@@ -96,26 +89,26 @@ bool CartesianPath::plan(const planning_scene::PlanningSceneConstPtr& from, cons
 	};
 
 	std::vector<moveit::core::RobotStatePtr> trajectory;
-#if MOVEIT_HAS_CARTESIAN_INTERPOLATOR
+#if MOVEIT_MASTER
 	double achieved_fraction = moveit::core::CartesianInterpolator::computeCartesianPath(
 	    &(sandbox_scene->getCurrentStateNonConst()), jmg, trajectory, &link, target, true,
 	    moveit::core::MaxEEFStep(props.get<double>("step_size")),
-	    moveit::core::JumpThreshold(props.get<double>("jump_threshold")), is_valid,
-	    props.get<kinematics::KinematicsQueryOptions>("kinematics_options"));
+	    moveit::core::JumpThreshold(props.get<double>("jump_threshold")), is_valid);
 #else
 	double achieved_fraction = sandbox_scene->getCurrentStateNonConst().computeCartesianPath(
 	    jmg, trajectory, &link, target, true, props.get<double>("step_size"), props.get<double>("jump_threshold"),
-	    is_valid, props.get<kinematics::KinematicsQueryOptions>("kinematics_options"));
+	    is_valid);
 #endif
 
-	assert(!trajectory.empty());  // there should be at least the start state
-	result = std::make_shared<robot_trajectory::RobotTrajectory>(sandbox_scene->getRobotModel(), jmg);
-	for (const auto& waypoint : trajectory)
-		result->addSuffixWayPoint(waypoint, 0.0);
+	if (!trajectory.empty()) {
+		result.reset(new robot_trajectory::RobotTrajectory(sandbox_scene->getRobotModel(), jmg));
+		for (const auto& waypoint : trajectory)
+			result->addSuffixWayPoint(waypoint, 0.0);
 
-	auto timing = props.get<TimeParameterizationPtr>("time_parameterization");
-	timing->computeTimeStamps(*result, props.get<double>("max_velocity_scaling_factor"),
-	                          props.get<double>("max_acceleration_scaling_factor"));
+		trajectory_processing::IterativeParabolicTimeParameterization timing;
+		timing.computeTimeStamps(*result, props.get<double>("max_velocity_scaling_factor"),
+		                         props.get<double>("max_acceleration_scaling_factor"));
+	}
 
 	return achieved_fraction >= props.get<double>("min_fraction");
 }

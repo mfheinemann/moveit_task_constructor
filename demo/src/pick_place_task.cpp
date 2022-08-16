@@ -429,7 +429,9 @@ bool PickPlaceTask::init() {
 		 *****************************************************/
 		{
 			auto stage = std::make_unique<stages::ModifyPlanningScene>("forbid collision (hand,object)");
-			stage->allowCollisions(object_name_, *t.getRobotModel()->getJointModelGroup(hand_group_name_), false);
+			stage->allowCollisions(
+			    object_name_,
+			    t.getRobotModel()->getJointModelGroup(hand_group_name_)->getLinkModelNamesWithCollisionGeometry(), false);
 			place->insert(std::move(stage));
 		}
 
@@ -490,7 +492,7 @@ bool PickPlaceTask::plan() {
 	ROS_INFO_NAMED(LOGNAME, "Start searching for task solutions");
 	int max_solutions = pnh_.param<int>("max_solutions", 10);
 
-	return static_cast<bool>(task_->plan(max_solutions));
+	return task_->plan(max_solutions);
 }
 
 bool PickPlaceTask::execute() {

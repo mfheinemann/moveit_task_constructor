@@ -36,14 +36,12 @@
 
 #include "execute_task_solution_capability.h"
 
-#include <moveit/task_constructor/moveit_compat.h>
-
 #include <moveit/plan_execution/plan_execution.h>
 #include <moveit/trajectory_processing/trajectory_tools.h>
 #include <moveit/kinematic_constraints/utils.h>
 #include <moveit/move_group/capability_names.h>
 #include <moveit/robot_state/conversions.h>
-#if MOVEIT_HAS_MESSAGE_CHECKS
+#if MOVEIT_MASTER
 #include <moveit/utils/message_checks.h>
 #endif
 
@@ -170,7 +168,7 @@ bool ExecuteTaskSolutionCapability::constructMotionPlan(const moveit_task_constr
 		/* TODO add action feedback and markers */
 		exec_traj.effect_on_success_ = [this, sub_traj,
 		                                description](const plan_execution::ExecutableMotionPlan* /*plan*/) {
-#if MOVEIT_HAS_MESSAGE_CHECKS
+#if MOVEIT_MASTER
 			if (!moveit::core::isEmpty(sub_traj.scene_diff)) {
 #else
 			if (!planning_scene::PlanningScene::isEmpty(sub_traj.scene_diff)) {
@@ -181,7 +179,7 @@ bool ExecuteTaskSolutionCapability::constructMotionPlan(const moveit_task_constr
 			return true;
 		};
 
-#if MOVEIT_HAS_MESSAGE_CHECKS
+#if MOVEIT_MASTER
 		if (!moveit::core::isEmpty(sub_traj.scene_diff.robot_state) &&
 #else
 		if (!planning_scene::PlanningScene::isEmpty(sub_traj.scene_diff.robot_state) &&
